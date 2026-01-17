@@ -178,14 +178,22 @@ def scrape_detailed_holdings(stock_holdings_file):
     today_str = datetime.now().strftime("%d-%m-%Y")
     failed_funds = []
     
+    start_time = time.time()
+    
     for idx, fund in enumerate(funds):
+        # Check execution time (limit to 9 mins 30 sec to allow graceful exit)
+        if time.time() - start_time > 570:
+            print("\n[WARNING] Time limit approaching (9.5 mins). Stopping detailed scraping gracefully.")
+            failed_funds.append("BATCH STOPPED: Time Limit Exceeded")
+            break
+
         symbol = fund['Symbol']
         name = fund['Name']
         url = f"https://nepsealpha.com/mutual-fund-navs/{symbol}?fsk=fs"
         
         print(f"[{idx+1}/{len(funds)}] Process {symbol}...")
         try:
-            resp = scraper.get(url)
+            resp = scraper.get(url, timeout=30) # Added request timeout
             if resp.status_code == 200:
                 from io import StringIO
                 dfs = pd.read_html(StringIO(resp.text))
