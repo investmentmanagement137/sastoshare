@@ -1,0 +1,8 @@
+selenium
+cloudscraper
+pandas
+beautifulsoup4
+boto3
+webdriver-manager
+lxml
+html5lib

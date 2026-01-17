@@ -1,0 +1,41 @@
+name: Daily Mutual Fund Scraper
+
+on:
+  schedule:
+    # Runs at 6 AM every day (UTC time? No, Nepal is UTC+5:45)
+    # 6 AM Nepal Time = 12:15 AM UTC approx.
+    # Cron uses UTC.
+    # 6:00 AM NPT - 5h 45m = 00:15 UTC.
+    - cron: '15 0 * * *'
+  workflow_dispatch: # Allows manual run
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: Run Scraper
+      env:
+        SUPABASE_ACCESS_KEY_ID: ${{ secrets.SUPABASE_ACCESS_KEY_ID }}
+        SUPABASE_SECRET_ACCESS_KEY: ${{ secrets.SUPABASE_SECRET_ACCESS_KEY }}
+      run: python main_scraper.py
+      
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mutual-fund-data
+        path: "*.csv"
+        retention-days: 5
