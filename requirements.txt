@@ -6,3 +6,4 @@ boto3
 webdriver-manager
 lxml
 html5lib
+urllib3<2.0.0
