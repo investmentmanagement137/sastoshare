@@ -4,11 +4,9 @@ on:
   push:
     branches: [ "main", "master" ]
   schedule:
-    # Runs at 6 AM every day (UTC time? No, Nepal is UTC+5:45)
-    # 6 AM Nepal Time = 12:15 AM UTC approx.
-    # Cron uses UTC.
-    # 6:00 AM NPT - 5h 45m = 00:15 UTC.
-    - cron: '15 0 * * *'
+    # Runs at 6 PM Nepal Time every day
+    # 6:00 PM NPT (UTC+5:45) = 12:15 PM UTC.
+    - cron: '15 12 * * *'
   workflow_dispatch: # Allows manual run
 
 jobs:
