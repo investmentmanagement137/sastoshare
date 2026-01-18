@@ -1,21 +1,14 @@
 import os
 import time
 import csv
-import json
 import re
-import cloudscraper
 import pandas as pd
 from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import Select
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from bs4 import BeautifulSoup
 import boto3
 from botocore.client import Config
+from playwright.sync_api import sync_playwright
+import cloudscraper
 
 def sanitize_filename(name):
     return re.sub(r'[<>:"/\\|?*]', '', name).strip()
@@ -48,115 +41,84 @@ def upload_to_supabase(file_path):
     except Exception as e:
         print(f"Failed to upload {file_path}: {e}")
 
-def setup_driver():
-    options = webdriver.ChromeOptions()
-    options.add_argument('--headless')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--window-size=1920,1080')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option('useAutomationExtension', False)
-    
-    # Helpful for CI environments
-    driver_path = ChromeDriverManager().install()
-    
-    # Fix for issue where webdriver-manager returns 'THIRD_PARTY_NOTICES' on Linux
-    if "THIRD_PARTY_NOTICES" in driver_path:
-        driver_path = os.path.dirname(driver_path) # Go up to folder
-        driver_path = os.path.join(driver_path, "chromedriver")
-        
-    # Ensure executable permissions
-    if os.path.exists(driver_path) and not os.access(driver_path, os.X_OK):
-        print(f"Adding execute permission to {driver_path}")
-        os.chmod(driver_path, 0o755)
-        
-    service = Service(driver_path)
-    driver = webdriver.Chrome(service=service, options=options)
-    return driver
-
 def scrape_main_sections():
-    driver = setup_driver()
     url = "https://nepsealpha.com/mutual-fund-navs"
     print(f"Navigating to {url}...")
     
+    stock_holdings_file = None
+
     try:
-        driver.get(url)
-        WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "home")))
-        
-        # Sections configuration
-        sections = [
-            {"name": "NAV", "tab_href": "#home", "table_id": "DataTables_Table_0", "select_name": "DataTables_Table_0_length"},
-            {"name": "Stock_Holdings_Fund_PE_Ratio", "tab_href": "#stkHolding", "table_id": "DataTables_Table_1", "select_name": "DataTables_Table_1_length"},
-            {"name": "Assets_Allocation", "tab_href": "#assetsAllocation", "table_id": "DataTables_Table_2", "select_name": "DataTables_Table_2_length"},
-            {"name": "Distributable_Dividend", "tab_href": "#distributableDividend", "table_id": "DataTables_Table_3", "select_name": "DataTables_Table_3_length"}
-        ]
-        
-        today_str = datetime.now().strftime("%d-%m-%Y")
-        stock_holdings_file = None
-        
-        for section in sections:
-            print(f"Scraping {section['name']}...")
-            try:
-                # Click tab (js click is safer)
-                tab = driver.find_element(By.CSS_SELECTOR, f"a[href='{section['tab_href']}']")
-                driver.execute_script("arguments[0].click();", tab)
-                time.sleep(2)
-                
-                # Show all entries
-                select_el = WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.NAME, section['select_name']))
-                )
-                Select(select_el).select_by_value('100')
-                time.sleep(2) # Wait for redraw
-                
-                # Parse
-                soup = BeautifulSoup(driver.page_source, 'html.parser')
-                table = soup.find('table', {'id': section['table_id']})
-                
-                if table:
-                    # Clean up header text
-                    headers = [th.text.strip() for th in table.find('thead').find_all('th')]
-                    rows = []
-                    tbody = table.find('tbody')
-                    if tbody:
-                        for tr in tbody.find_all('tr'):
-                             # Use separator for multiline cells if needed, or just space
-                            cells = [td.text.strip() for td in tr.find_all('td')]
-                            if len(cells) == len(headers):
-                                rows.append(cells)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            
+            page.goto(url)
+            page.wait_for_selector("#home", timeout=60000)
+            
+            # Sections configuration
+            sections = [
+                {"name": "NAV", "tab_href": "#home", "table_id": "DataTables_Table_0", "select_name": "DataTables_Table_0_length"},
+                {"name": "Stock_Holdings_Fund_PE_Ratio", "tab_href": "#stkHolding", "table_id": "DataTables_Table_1", "select_name": "DataTables_Table_1_length"},
+                {"name": "Assets_Allocation", "tab_href": "#assetsAllocation", "table_id": "DataTables_Table_2", "select_name": "DataTables_Table_2_length"},
+                {"name": "Distributable_Dividend", "tab_href": "#distributableDividend", "table_id": "DataTables_Table_3", "select_name": "DataTables_Table_3_length"}
+            ]
+            
+            today_str = datetime.now().strftime("%d-%m-%Y")
+            
+            for section in sections:
+                print(f"Scraping {section['name']}...")
+                try:
+                    # Click tab
+                    page.click(f"a[href='{section['tab_href']}']")
+                    time.sleep(2) # Short wait for transitions
                     
-                    if rows:
-                        filename = f"{section['name']}-{today_str}.csv"
-                        with open(filename, 'w', newline='', encoding='utf-8') as f:
-                            writer = csv.writer(f)
-                            writer.writerow(headers)
-                            writer.writerows(rows)
-                        print(f"Saved {filename}")
-                        upload_to_supabase(filename)
+                    # Show all entries
+                    page.select_option(f"select[name='{section['select_name']}']", "100")
+                    time.sleep(2) # Wait for table redraw
+                    
+                    # Parse
+                    soup = BeautifulSoup(page.content(), 'html.parser')
+                    table = soup.find('table', {'id': section['table_id']})
+                    
+                    if table:
+                        # Clean up header text
+                        headers = [th.text.strip() for th in table.find('thead').find_all('th')]
+                        rows = []
+                        tbody = table.find('tbody')
+                        if tbody:
+                            for tr in tbody.find_all('tr'):
+                                 # Use separator for multiline cells if needed, or just space
+                                cells = [td.text.strip() for td in tr.find_all('td')]
+                                if len(cells) == len(headers):
+                                    rows.append(cells)
                         
-                        if section['name'] == "Stock_Holdings_Fund_PE_Ratio":
-                            stock_holdings_file = filename
-                else:
-                    print(f"Table not found for {section['name']}")
-                    
-            except Exception as e:
-                print(f"Error scraping {section['name']}: {e}")
-                
+                        if rows:
+                            filename = f"{section['name']}-{today_str}.csv"
+                            with open(filename, 'w', newline='', encoding='utf-8') as f:
+                                writer = csv.writer(f)
+                                writer.writerow(headers)
+                                writer.writerows(rows)
+                            print(f"Saved {filename}")
+                            upload_to_supabase(filename)
+                            
+                            if section['name'] == "Stock_Holdings_Fund_PE_Ratio":
+                                stock_holdings_file = filename
+                    else:
+                        print(f"Table not found for {section['name']}")
+                        
+                except Exception as e:
+                    print(f"Error scraping {section['name']}: {e}")
+            
+            browser.close()
+            
         return stock_holdings_file
-        
+
     except Exception as e:
         print(f"Critical error in main loop: {e}")
-        if 'driver' in locals():
-            print(f"Current URL: {driver.current_url}")
-            print(f"Page Title: {driver.title}")
-            print("Page Source Snippet:")
-            print(driver.page_source[:1000]) # First 1000 chars
-    finally:
-        if 'driver' in locals():
-            driver.quit()
+        return None
 
 def scrape_detailed_holdings(stock_holdings_file):
     if not stock_holdings_file or not os.path.exists(stock_holdings_file):
@@ -193,7 +155,7 @@ def scrape_detailed_holdings(stock_holdings_file):
         
         print(f"[{idx+1}/{len(funds)}] Process {symbol}...")
         try:
-            resp = scraper.get(url, timeout=30) # Added request timeout
+            resp = scraper.get(url, timeout=30)
             if resp.status_code == 200:
                 from io import StringIO
                 dfs = pd.read_html(StringIO(resp.text))
@@ -224,58 +186,61 @@ def scrape_detailed_holdings(stock_holdings_file):
         print("Check 'scraping_errors.log' for details.")
 
 def scrape_debentures():
-    driver = setup_driver()
     url = "https://nepsealpha.com/debenture"
     print(f"Navigating to {url}...")
     
     try:
-        driver.get(url)
-        # Wait for table
-        WebDriverWait(driver, 60).until(EC.presence_of_element_located((By.ID, "DataTables_Table_0")))
-        
-        # Select 'Show 100 entries' to likely see all (or most)
-        try:
-            select_el = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.NAME, "DataTables_Table_0_length"))
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             )
-            Select(select_el).select_by_value('100')
-            time.sleep(2) # Wait for redraw
-        except Exception as e:
-            print(f"Could not select length: {e}")
-
-        # Parse with BS4
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        table = soup.find('table', {'id': 'DataTables_Table_0'})
-        
-        if table:
-            headers = [th.text.strip() for th in table.find('thead').find_all('th')]
-            rows = []
-            tbody = table.find('tbody')
-            if tbody:
-                for tr in tbody.find_all('tr'):
-                    cells = [td.text.strip() for td in tr.find_all('td')]
-                    # Basic validation
-                    if len(cells) == len(headers):
-                        rows.append(cells)
             
-            if rows:
-                today_str = datetime.now().strftime("%d-%m-%Y")
-                filename = f"debenture-sastoshare-{today_str}.csv"
-                with open(filename, 'w', newline='', encoding='utf-8') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(headers)
-                    writer.writerows(rows)
-                print(f"Saved {filename}")
-                upload_to_supabase(filename)
+            page.goto(url)
+            # Wait for table
+            page.wait_for_selector("#DataTables_Table_0", timeout=60000)
+            
+            # Select 'Show 100 entries'
+            try:
+                page.select_option("select[name='DataTables_Table_0_length']", "100")
+                time.sleep(2) # Wait for redraw
+            except Exception as e:
+                print(f"Could not select length: {e}")
+
+            # Parse with BS4
+            soup = BeautifulSoup(page.content(), 'html.parser')
+            table = soup.find('table', {'id': 'DataTables_Table_0'})
+            
+            if table:
+                headers = [th.text.strip() for th in table.find('thead').find_all('th')]
+                rows = []
+                tbody = table.find('tbody')
+                if tbody:
+                    for tr in tbody.find_all('tr'):
+                        cells = [td.text.strip() for td in tr.find_all('td')]
+                        # Basic validation
+                        if len(cells) == len(headers):
+                            rows.append(cells)
+                
+                if rows:
+                    today_str = datetime.now().strftime("%d-%m-%Y")
+                    filename = f"debenture-sastoshare-{today_str}.csv"
+                    with open(filename, 'w', newline='', encoding='utf-8') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(headers)
+                        writer.writerows(rows)
+                    print(f"Saved {filename}")
+                    upload_to_supabase(filename)
+                else:
+                    print("No rows found for Debentures.")
             else:
-                print("No rows found for Debentures.")
-        else:
-            print("Debenture table not found.")
+                print("Debenture table not found.")
+            
+            browser.close()
             
     except Exception as e:
         print(f"Error scraping debentures: {e}")
-    finally:
-        driver.quit()
 
 if __name__ == "__main__":
     print("Starting Main Scraper...")

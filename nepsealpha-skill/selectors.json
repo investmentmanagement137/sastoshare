@@ -1,0 +1,39 @@
+{
+  "pages": {
+    "mutual_fund_navs": {
+      "url": "https://nepsealpha.com/mutual-fund-navs",
+      "tabs": {
+        "nav": "a[href='#home']",
+        "stock_holdings": "a[href='#stkHolding']",
+        "assets_allocation": "a[href='#assetsAllocation']",
+        "dividend": "a[href='#distributableDividend']"
+      },
+      "tables": {
+        "nav": {
+          "id": "DataTables_Table_0",
+          "length_selector": "select[name='DataTables_Table_0_length']"
+        },
+        "stock_holdings": {
+          "id": "DataTables_Table_1",
+          "length_selector": "select[name='DataTables_Table_1_length']"
+        },
+        "assets_allocation": {
+          "id": "DataTables_Table_2",
+          "length_selector": "select[name='DataTables_Table_2_length']"
+        },
+        "dividend": {
+          "id": "DataTables_Table_3",
+          "length_selector": "select[name='DataTables_Table_3_length']"
+        }
+      }
+    },
+    "debenture": {
+      "url": "https://nepsealpha.com/debenture",
+      "notes": "Protected by Cloudflare",
+      "table": {
+        "id": "DataTables_Table_0",
+        "length_selector": "select[name='DataTables_Table_0_length']"
+      }
+    }
+  }
+}
