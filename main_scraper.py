@@ -62,7 +62,7 @@ def scrape_main_sections():
             sections = [
                 {"name": "NAV", "tab_href": "#home", "table_id": "DataTables_Table_0", "select_name": "DataTables_Table_0_length"},
                 {"name": "Stock_Holdings_Fund_PE_Ratio", "tab_href": "#stkHolding", "table_id": "DataTables_Table_1", "select_name": "DataTables_Table_1_length"},
-                {"name": "Assets_Allocation", "tab_href": "#assetsAllocation", "table_id": "DataTables_Table_2", "select_name": "DataTables_Table_2_length"},
+                {"name": "MF_Assets_Allocation", "tab_href": "#assetsAllocation", "table_id": "DataTables_Table_2", "select_name": "DataTables_Table_2_length"},
                 {"name": "Distributable_Dividend", "tab_href": "#distributableDividend", "table_id": "DataTables_Table_3", "select_name": "DataTables_Table_3_length"}
             ]
             
