@@ -146,59 +146,67 @@ def scrape_detailed_holdings(stock_holdings_file):
     
     start_time = time.time()
     
+    from collections import deque
     import random
     
-    for idx, fund in enumerate(funds):
-        # Check execution time (limit to 25 mins to allow for slower requests)
+    # Initialize queue with (fund_dict, attempt_count)
+    # attempt_count starts at 0
+    queue = deque((fund, 0) for fund in funds)
+    total_to_process = len(funds)
+    processed_count = 0
+    
+    while queue:
+        # Check execution time (limit to 25 mins)
         if time.time() - start_time > 1500:
             print("\n[WARNING] Time limit approaching (25 mins). Stopping detailed scraping gracefully.")
             failed_funds.append("BATCH STOPPED: Time Limit Exceeded")
             break
 
+        fund, attempt = queue.popleft()
         symbol = fund['Symbol']
         name = fund['Name']
+        
+        # Friendly progress indicator: shows completed / total
+        print(f"[{processed_count + 1}/{total_to_process}] Processing {symbol} (Attempt {attempt + 1})...")
+
         url = f"https://nepsealpha.com/mutual-fund-navs/{symbol}?fsk=fs"
+        success = False
         
-        print(f"[{idx+1}/{len(funds)}] Process {symbol}...")
+        try:
+            resp = scraper.get(url, timeout=30)
+            if resp.status_code == 200:
+                from io import StringIO
+                dfs = pd.read_html(StringIO(resp.text))
+                if dfs:
+                    df = dfs[0]
+                    safe_name = sanitize_filename(name)
+                    filename = f"assets-{symbol}-{safe_name}-{today_str}.csv"
+                    df.to_csv(filename, index=False, encoding='utf-8-sig')
+                    print(f"Saved {filename}")
+                    upload_to_supabase(filename)
+                    success = True
+                    processed_count += 1
+            elif resp.status_code == 403:
+                print(f"  Rate limited (403) for {symbol}.")
+            else:
+                print(f"  Failed {symbol}: HTTP {resp.status_code}")
+                
+        except Exception as e:
+            print(f"  Error {symbol}: {e}")
+
+        if not success:
+            if attempt < 2:  # Allow up to 3 attempts (0, 1, 2)
+                wait_time = 10 + (attempt * 10)  # 10s, 20s
+                print(f"  -> Re-queueing {symbol} for retry in {wait_time}s...")
+                time.sleep(wait_time) 
+                queue.append((fund, attempt + 1))
+            else:
+                print(f"  -> Giving up on {symbol} after {attempt + 1} attempts.")
+                failed_funds.append(f"{symbol}: Failed after {attempt + 1} attempts")
+                processed_count += 1 # Count as processed (failed)
         
-        # Retry logic with exponential backoff
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                resp = scraper.get(url, timeout=30)
-                if resp.status_code == 200:
-                    from io import StringIO
-                    dfs = pd.read_html(StringIO(resp.text))
-                    if dfs:
-                        df = dfs[0]
-                        safe_name = sanitize_filename(name)
-                        filename = f"assets-{symbol}-{safe_name}-{today_str}.csv"
-                        df.to_csv(filename, index=False, encoding='utf-8-sig')
-                        print(f"Saved {filename}")
-                        upload_to_supabase(filename)
-                    break  # Success, exit retry loop
-                elif resp.status_code == 403:
-                    if attempt < max_retries - 1:
-                        wait_time = (attempt + 1) * 10 + random.uniform(5, 15)
-                        print(f"  Rate limited (403). Waiting {wait_time:.1f}s before retry {attempt + 2}/{max_retries}...")
-                        time.sleep(wait_time)
-                    else:
-                        print(f"Failed {symbol}: {resp.status_code} after {max_retries} attempts")
-                        failed_funds.append(f"{symbol}: HTTP {resp.status_code}")
-                else:
-                    print(f"Failed {symbol}: {resp.status_code}")
-                    failed_funds.append(f"{symbol}: HTTP {resp.status_code}")
-                    break
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 5
-                    print(f"  Error, retrying in {wait_time}s...")
-                    time.sleep(wait_time)
-                else:
-                    print(f"Error {symbol}: {e}")
-                    failed_funds.append(f"{symbol}: Error - {e}")
-        
-        # Random delay between requests (3-8 seconds) to avoid rate limiting
+        # Random delay between processing items to keep rate low
+        # If we just failed, we already slept a bit, but a small extra pause is fine
         delay = random.uniform(3, 8)
         time.sleep(delay)
 

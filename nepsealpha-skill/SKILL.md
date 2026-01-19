@@ -59,7 +59,7 @@ All tables use the DataTables library. To see all data, you typically need to se
 3.  **Bot Detection**: The site uses Cloudflare. Simple `requests` often fail on protected pages like `/debenture`. Playwright (headed) or `cloudscraper` is recommended.
 4.  **Rate Limiting**: Rapid requests to detail pages (e.g., iterating through all funds) triggers **403 Forbidden** blocks.
     - **Solution**: Use random delays (3-8 seconds) between requests.
-    - **Retry Logic**: Implement exponential backoff for 403 responses.
+    - **Retry Logic**: Instead of immediate retries (which often fail), re-queue failed items to the back of the processing list. This gives the server time to reset limits while other items are processed.
     - **Timeouts**: Ensure your scraping job has a sufficient timeout (e.g., 30+ mins) to accommodate these delays.
 
 ## Machine Readable Selectors
