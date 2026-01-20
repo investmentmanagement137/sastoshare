@@ -159,6 +159,7 @@ def scrape_detailed_holdings(stock_holdings_file):
     queue = deque((fund, 0) for fund in funds)
     total_to_process = len(funds)
     processed_count = 0
+    consecutive_failures = 0  # Track consecutive 403s
     
     while queue:
         # Check execution time (limit to 25 mins)
@@ -176,6 +177,7 @@ def scrape_detailed_holdings(stock_holdings_file):
 
         url = f"https://nepsealpha.com/mutual-fund-navs/{symbol}?fsk=fs"
         success = False
+        rate_limited = False
         
         try:
             resp = scraper.get(url, timeout=30)
@@ -191,28 +193,42 @@ def scrape_detailed_holdings(stock_holdings_file):
                     upload_to_supabase(filename)
                     success = True
                     processed_count += 1
+                    consecutive_failures = 0  # Reset on success
             elif resp.status_code == 403:
                 print(f"  Rate limited (403) for {symbol}.")
+                rate_limited = True
+                consecutive_failures += 1
             else:
                 print(f"  Failed {symbol}: HTTP {resp.status_code}")
+                consecutive_failures += 1
                 
         except Exception as e:
             print(f"  Error {symbol}: {e}")
+            consecutive_failures += 1
 
         if not success:
             if attempt < 2:  # Allow up to 3 attempts (0, 1, 2)
-                wait_time = 10 + (attempt * 10)  # 10s, 20s
-                print(f"  -> Re-queueing {symbol} for retry in {wait_time}s...")
-                time.sleep(wait_time) 
+                wait_time = 30 + (attempt * 30)  # 30s, 60s, 90s
+                print(f"  -> Re-queueing {symbol} for retry later...")
                 queue.append((fund, attempt + 1))
             else:
                 print(f"  -> Giving up on {symbol} after {attempt + 1} attempts.")
                 failed_funds.append(f"{symbol}: Failed after {attempt + 1} attempts")
                 processed_count += 1 # Count as processed (failed)
         
-        # Random delay between processing items to keep rate low
-        # If we just failed, we already slept a bit, but a small extra pause is fine
-        delay = random.uniform(3, 8)
+        # Cooldown if multiple consecutive failures
+        if consecutive_failures >= 3:
+            print(f"\n[COOLDOWN] {consecutive_failures} consecutive failures. Waiting 60s to let server reset...")
+            time.sleep(60)
+            consecutive_failures = 0
+        elif rate_limited:
+            # Extra wait after any 403
+            cooldown = random.uniform(20, 40)
+            print(f"  Waiting {cooldown:.0f}s after rate limit...")
+            time.sleep(cooldown)
+        
+        # Random delay between processing items (increased from 3-8s)
+        delay = random.uniform(8, 15)
         time.sleep(delay)
 
     # Report failures
