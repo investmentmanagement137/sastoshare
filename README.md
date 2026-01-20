@@ -1,95 +1,116 @@
-# SastoShare Scraper
+# SastoShare - Nepal Mutual Fund & Debenture Scraper
 
-This project is an automated Python scraper designed to extract Mutual Fund and Debenture data from [NepseAlpha](https://nepsealpha.com/). It runs daily via GitHub Actions and uploads the collected data to Supabase Storage (S3).
+Automated scraper for Nepal's mutual fund and debenture data from [NepseAlpha](https://nepsealpha.com/). Runs daily via GitHub Actions and uploads data to Supabase S3 Storage.
 
-## Features
+## 🎯 Features
 
-*   **Daily Automation**: Scrapes data automatically every day at 6:00 AM Nepal Time (UTC+5:45).
-*   **Comprehensive Data**:
-    *   **Mutual Funds**: NAV, Assets Allocation, Distributable Dividend, Stock Holdings, and Fund PE Ratio.
-    *   **Detailed Holdings**: Detailed stock portfolio for *each* individual mutual fund (approx. 50+ funds).
-    *   **Debentures**: Comprehensive list of debentures and their details.
-*   **Stealth Scraping**: Uses Selenium (headless) with stealth configurations to bypass bot detection for dynamic content.
-*   **Cloudflare Bypass**: Uses `cloudscraper` to handle protected API endpoints for detailed holdings.
-*   **S3 Integration**: Automatically uploads all generated CSV files to a configured Supabase Storage bucket.
-*   **Error Logging**: Generates a `scraping_errors.log` file if any specific fund fails to scrape.
+| Feature | Description |
+|---------|-------------|
+| **Daily Automation** | Scrapes at 6:00 PM NPT every day |
+| **Detailed Holdings** | Scrapes 52+ individual fund portfolios every 2 days |
+| **Cloudflare Bypass** | Uses Playwright with auto-challenge solving |
+| **S3 Upload** | Automatically uploads all CSVs to Supabase Storage |
+| **Rate Limit Handling** | Smart cooldowns and retry logic |
 
-## Project Structure
+## 📊 Data Collected
 
-*   `main_scraper.py`: The master script. It orchestrates the entire process:
-    1.  Sets up a Headless Chrome driver.
-    2.  Scrapes the main Mutual Fund sections strings.
-    3.  Scrapes the Debenture table.
-    4.  Iterates through all funds to scrape their detailed stock holdings.
-    5.  Uploads every file to Supabase S3 immediately after saving.
-*   `scrape_debentures.py`: A standalone script to test/run *only* the debenture scraping part.
-*   `requirements.txt`: Python dependencies.
-*   `.github/workflows/daily_scrape.yml`: GitHub Actions configuration for the daily schedule.
-*   `push_to_github.bat`: Helper script for one-click git pushes on Windows.
+### Daily Scrape (`--task daily`)
+| File | Description |
+|------|-------------|
+| `NAV-DD-MM-YYYY.csv` | Net Asset Value for all mutual funds |
+| `MF_Assets_Allocation-DD-MM-YYYY.csv` | Fund asset distribution (stocks, bonds, cash) |
+| `Distributable_Dividend-DD-MM-YYYY.csv` | Expected dividend capacity |
+| `Stock_Holdings_Fund_PE_Ratio-DD-MM-YYYY.csv` | Fund PE ratios and stock holding % |
+| `debenture-sastoshare-DD-MM-YYYY.csv` | All debentures with yields and maturity |
 
-## Installation & Setup
+### Detailed Scrape (`--task detailed`)
+| File | Description |
+|------|-------------|
+| `assets-[SYMBOL]-[Fund Name]-DD-MM-YYYY.csv` | Individual stock portfolio for each fund (52+ files) |
 
-1.  **Clone the Repository**
-    ```bash
-    git clone https://github.com/investmentmanagement137/sastoshare_new.git
-    cd sastoshare_new
-    ```
+## 🚀 Quick Start
 
-2.  **Install Dependencies**
-    It is recommended to use a virtual environment.
-    ```bash
-    pip install -r requirements.txt
-    ```
+### Local Setup
+```bash
+# Clone
+git clone https://github.com/investmentmanagement137/sastoshare.git
+cd sastoshare
 
-3.  **Environment Variables**
-    The script requires the following environment variables for S3 upload. Create a `.env` file or set them in your system/GitHub Secrets:
-    *   `SUPABASE_ACCESS_KEY_ID`
-    *   `SUPABASE_SECRET_ACCESS_KEY`
+# Install dependencies
+pip install -r requirements.txt
+playwright install chromium
 
-## How It Works
-
-### 1. Main Sections (`scrape_main_sections`)
-*   Navigates to `https://nepsealpha.com/mutual-fund-navs`.
-*   Uses Selenium to interact with the page tabs (NAV, Assets, Dividend, etc.).
-*   Forces the "Show 100 entries" dropdown to ensure all data is visible.
-*   Extracts the table data using BeautifulSoup.
-*   Saves as `[SectionName]-[Date].csv`.
-
-### 2. Debentures (`scrape_debentures`)
-*   Navigates to `https://nepsealpha.com/debenture`.
-*   Similar logic to main sections: loads table, expands entries, and extracts data.
-*   Saves as `debenture-sastoshare-[Date].csv`.
-
-### 3. Detailed Holdings (`scrape_detailed_holdings`)
-*   Reads the list of funds from the previously scraped `Stock_Holdings_Fund_PE_Ratio` CSV.
-*   Constructs the detail URL for each fund: `https://nepsealpha.com/mutual-fund-navs/{SYMBOL}?fsk=fs`.
-*   Uses `cloudscraper` to bypass potential 403 Forbidden errors on these specific pages.
-*   Saves each fund's portfolio as `assets-[Symbol]-[FundName]-[Date].csv`.
-
-## Output Files
-
-All files are saved as CSVs with the current date:
-*   `NAV-DD-MM-YYYY.csv`
-*   `Assets_Allocation-DD-MM-YYYY.csv`
-*   `Distributable_Dividend-DD-MM-YYYY.csv`
-*   `Stock_Holdings_Fund_PE_Ratio-DD-MM-YYYY.csv`
-*   `debenture-sastoshare-DD-MM-YYYY.csv`
-*   `assets-[Symbol]-[Fund Name]-DD-MM-YYYY.csv` (One per fund)
-
-## Running Locally
-
-To run the full scraper:
-```powershell
-python main_scraper.py
+# Run
+python main_scraper.py --task daily      # Quick daily data
+python main_scraper.py --task detailed   # Full detailed holdings
+python main_scraper.py --task all        # Everything
 ```
 
-To run only the debenture scraper:
-```powershell
-python scrape_debentures.py
+### Environment Variables
+For S3 upload, set these (or add to GitHub Secrets):
+```
+SUPABASE_ACCESS_KEY_ID=your_key
+SUPABASE_SECRET_ACCESS_KEY=your_secret
 ```
 
-## GitHub Actions
+## ⏰ GitHub Actions Schedule
 
-The workflow is configured in `.github/workflows/daily_scrape.yml`.
-*   **Trigger**: Push to `main`/`master` AND Schedule (`15 0 * * *` cron = 6:00 AM Nepal Time).
-*   **Secrets**: Ensure `SUPABASE_ACCESS_KEY_ID` and `SUPABASE_SECRET_ACCESS_KEY` are added to your repository's "Actions Secrets".
+| Workflow | Schedule | Task |
+|----------|----------|------|
+| `daily_scrape.yml` | 6:00 PM NPT daily | `--task daily` |
+| `detailed_scrape.yml` | 6:00 PM NPT every 2 days | `--task detailed` |
+
+## 🛡️ Anti-Bot Protection
+
+NepseAlpha uses Cloudflare protection. This scraper handles it with:
+
+1. **Playwright Browser** - Real browser instead of HTTP requests
+2. **Cloudflare Challenge Auto-Solve** - Waits up to 15s for challenge to complete
+3. **Rate Limiting** - 8-15s delays between requests
+4. **Consecutive Failure Cooldown** - 60s pause after 3+ failures
+5. **Retry Queue** - Failed symbols retry later (up to 3 attempts)
+
+## 📁 Project Structure
+
+```
+sastoshare/
+├── main_scraper.py          # Main scraper script
+├── requirements.txt         # Python dependencies
+├── .github/workflows/
+│   ├── daily_scrape.yml     # Daily automation
+│   └── detailed_scrape.yml  # Detailed holdings automation
+└── nepsealpha-skill/        # Selector documentation
+    ├── SKILL.md
+    └── selectors.json
+```
+
+## 🔧 How It Works
+
+### 1. Main Sections (Playwright)
+- Opens headless Chromium browser
+- Navigates to each tab (NAV, Assets, Dividend, Holdings)
+- Selects "Show 100 entries" to load all data
+- Parses tables with BeautifulSoup
+- Uploads CSV immediately after saving
+
+### 2. Detailed Fund Holdings (Playwright)
+- Reads fund list from `Stock_Holdings_Fund_PE_Ratio` CSV
+- Visits each fund's detail page: `/mutual-fund-navs/{SYMBOL}?fsk=fs`
+- Handles Cloudflare challenges automatically
+- Parses portfolio table with pandas
+- Rate-limited with smart cooldowns
+
+### 3. S3 Upload
+- Sanitizes filenames (replaces special chars with `-`)
+- Uploads to Supabase S3-compatible storage
+- Uses boto3 with S3v4 signature
+
+## 📝 Error Handling
+
+- **`scraping_errors.log`** - Lists failed funds and reasons
+- **25-minute timeout** - Graceful stop before GitHub Actions limit
+- **Retry logic** - Failed items retry up to 3 times
+
+## 📜 License
+
+MIT
