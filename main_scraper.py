@@ -145,7 +145,6 @@ def scrape_detailed_holdings(stock_holdings_file):
     
     print(f"Found {len(funds)} funds.")
     
-    scraper = cloudscraper.create_scraper()
     today_str = datetime.now().strftime("%d-%m-%Y")
     failed_funds = []
     
@@ -153,83 +152,107 @@ def scrape_detailed_holdings(stock_holdings_file):
     
     from collections import deque
     import random
+    from io import StringIO
     
     # Initialize queue with (fund_dict, attempt_count)
-    # attempt_count starts at 0
     queue = deque((fund, 0) for fund in funds)
     total_to_process = len(funds)
     processed_count = 0
-    consecutive_failures = 0  # Track consecutive 403s
+    consecutive_failures = 0
     
-    while queue:
-        # Check execution time (limit to 25 mins)
-        if time.time() - start_time > 1500:
-            print("\n[WARNING] Time limit approaching (25 mins). Stopping detailed scraping gracefully.")
-            failed_funds.append("BATCH STOPPED: Time Limit Exceeded")
-            break
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            )
+            
+            while queue:
+                # Check execution time (limit to 25 mins)
+                if time.time() - start_time > 1500:
+                    print("\n[WARNING] Time limit approaching (25 mins). Stopping detailed scraping gracefully.")
+                    failed_funds.append("BATCH STOPPED: Time Limit Exceeded")
+                    break
 
-        fund, attempt = queue.popleft()
-        symbol = fund['Symbol']
-        name = fund['Name']
-        
-        # Friendly progress indicator: shows completed / total
-        print(f"[{processed_count + 1}/{total_to_process}] Processing {symbol} (Attempt {attempt + 1})...")
-
-        url = f"https://nepsealpha.com/mutual-fund-navs/{symbol}?fsk=fs"
-        success = False
-        rate_limited = False
-        
-        try:
-            resp = scraper.get(url, timeout=30)
-            if resp.status_code == 200:
-                from io import StringIO
-                dfs = pd.read_html(StringIO(resp.text))
-                if dfs:
-                    df = dfs[0]
-                    safe_name = sanitize_filename(name)
-                    filename = f"assets-{symbol}-{safe_name}-{today_str}.csv"
-                    df.to_csv(filename, index=False, encoding='utf-8-sig')
-                    print(f"Saved {filename}")
-                    upload_to_supabase(filename)
-                    success = True
-                    processed_count += 1
-                    consecutive_failures = 0  # Reset on success
-            elif resp.status_code == 403:
-                print(f"  Rate limited (403) for {symbol}.")
-                rate_limited = True
-                consecutive_failures += 1
-            else:
-                print(f"  Failed {symbol}: HTTP {resp.status_code}")
-                consecutive_failures += 1
+                fund, attempt = queue.popleft()
+                symbol = fund['Symbol']
+                name = fund['Name']
                 
-        except Exception as e:
-            print(f"  Error {symbol}: {e}")
-            consecutive_failures += 1
+                print(f"[{processed_count + 1}/{total_to_process}] Processing {symbol} (Attempt {attempt + 1})...")
 
-        if not success:
-            if attempt < 2:  # Allow up to 3 attempts (0, 1, 2)
-                wait_time = 30 + (attempt * 30)  # 30s, 60s, 90s
-                print(f"  -> Re-queueing {symbol} for retry later...")
-                queue.append((fund, attempt + 1))
-            else:
-                print(f"  -> Giving up on {symbol} after {attempt + 1} attempts.")
-                failed_funds.append(f"{symbol}: Failed after {attempt + 1} attempts")
-                processed_count += 1 # Count as processed (failed)
-        
-        # Cooldown if multiple consecutive failures
-        if consecutive_failures >= 3:
-            print(f"\n[COOLDOWN] {consecutive_failures} consecutive failures. Waiting 60s to let server reset...")
-            time.sleep(60)
-            consecutive_failures = 0
-        elif rate_limited:
-            # Extra wait after any 403
-            cooldown = random.uniform(20, 40)
-            print(f"  Waiting {cooldown:.0f}s after rate limit...")
-            time.sleep(cooldown)
-        
-        # Random delay between processing items (increased from 3-8s)
-        delay = random.uniform(8, 15)
-        time.sleep(delay)
+                url = f"https://nepsealpha.com/mutual-fund-navs/{symbol}?fsk=fs"
+                success = False
+                rate_limited = False
+                
+                try:
+                    response = page.goto(url, wait_until="networkidle", timeout=30000)
+                    
+                    if response and response.status == 200:
+                        # Wait a bit for any dynamic content
+                        time.sleep(2)
+                        html = page.content()
+                        
+                        # Check for Cloudflare block
+                        if "Just a moment" in html or "Checking your browser" in html:
+                            print(f"  Cloudflare challenge for {symbol}.")
+                            rate_limited = True
+                            consecutive_failures += 1
+                        else:
+                            dfs = pd.read_html(StringIO(html))
+                            if dfs:
+                                df = dfs[0]
+                                safe_name = sanitize_filename(name)
+                                filename = f"assets-{symbol}-{safe_name}-{today_str}.csv"
+                                df.to_csv(filename, index=False, encoding='utf-8-sig')
+                                print(f"Saved {filename}")
+                                upload_to_supabase(filename)
+                                success = True
+                                processed_count += 1
+                                consecutive_failures = 0
+                            else:
+                                print(f"  No tables found for {symbol}.")
+                                consecutive_failures += 1
+                    elif response and response.status == 403:
+                        print(f"  Rate limited (403) for {symbol}.")
+                        rate_limited = True
+                        consecutive_failures += 1
+                    else:
+                        status = response.status if response else "No response"
+                        print(f"  Failed {symbol}: HTTP {status}")
+                        consecutive_failures += 1
+                        
+                except Exception as e:
+                    print(f"  Error {symbol}: {e}")
+                    consecutive_failures += 1
+
+                if not success:
+                    if attempt < 2:  # Allow up to 3 attempts
+                        print(f"  -> Re-queueing {symbol} for retry later...")
+                        queue.append((fund, attempt + 1))
+                    else:
+                        print(f"  -> Giving up on {symbol} after {attempt + 1} attempts.")
+                        failed_funds.append(f"{symbol}: Failed after {attempt + 1} attempts")
+                        processed_count += 1
+                
+                # Cooldown if multiple consecutive failures
+                if consecutive_failures >= 3:
+                    print(f"\n[COOLDOWN] {consecutive_failures} consecutive failures. Waiting 60s...")
+                    time.sleep(60)
+                    consecutive_failures = 0
+                elif rate_limited:
+                    cooldown = random.uniform(20, 40)
+                    print(f"  Waiting {cooldown:.0f}s after rate limit...")
+                    time.sleep(cooldown)
+                
+                # Random delay between requests
+                delay = random.uniform(8, 15)
+                time.sleep(delay)
+            
+            browser.close()
+    
+    except Exception as e:
+        print(f"Critical error in detailed scraping: {e}")
 
     # Report failures
     print(f"\nScraping Summary: {len(funds) - len(failed_funds)} succeeded, {len(failed_funds)} failed.")
