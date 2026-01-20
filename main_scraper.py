@@ -13,6 +13,10 @@ import cloudscraper
 def sanitize_filename(name):
     return re.sub(r'[<>:"/\\|?*]', '', name).strip()
 
+def sanitize_s3_key(name):
+    """Replace all special characters with - for S3 keys, keeping only alphanumeric, dots, and hyphens."""
+    return re.sub(r'[^a-zA-Z0-9.\-]', '-', name)
+
 def upload_to_supabase(file_path):
     access_key = os.environ.get("SUPABASE_ACCESS_KEY_ID")
     secret_key = os.environ.get("SUPABASE_SECRET_ACCESS_KEY")
@@ -35,8 +39,9 @@ def upload_to_supabase(file_path):
         )
         
         file_name = os.path.basename(file_path)
-        print(f"Uploading {file_name} to bucket '{bucket_name}'...")
-        s3.upload_file(file_path, bucket_name, file_name)
+        s3_key = sanitize_s3_key(file_name)
+        print(f"Uploading {file_name} as '{s3_key}' to bucket '{bucket_name}'...")
+        s3.upload_file(file_path, bucket_name, s3_key)
         print("Upload successful.")
     except Exception as e:
         print(f"Failed to upload {file_path}: {e}")
